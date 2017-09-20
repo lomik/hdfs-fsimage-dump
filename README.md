@@ -3,7 +3,7 @@ Dump files, directories and snapshotted directories from HDFS fsimage to json
 
 Difference from `hdfs oiv -p Delimited`:
 * Snapshotted directories dump added
-* Extra custom static json fields can be added to result json 
+* [optional] Extra custom static json fields can be added to result json 
 * Lost files are placed into virtual directory "/detached/"
 
 ## Build
