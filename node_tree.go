@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
 
 const AllocNodeChunk = 100000
@@ -98,36 +99,67 @@ func (t *NodeTree) GetParentName(key uint64) (uint64, []byte) {
 	return 0, nil
 }
 
-func (t *NodeTree) GetPath(key uint64) string {
+func getParentName(key uint64, tree *NodeTree, snaptree *NodeTree) (uint64, string) {
+	p, n := tree.GetParentName(key)
+	ret := []string{}
+
+	if len(n) > 0 {
+		ret = append(ret, string(n))
+	}
+
+	if p == 0 {
+		sp, sn := snaptree.GetParentName(key)
+		if len(sn) > 0 {
+			// prepend
+			ret = append([]string{string(sn)}, ret...)
+		}
+		p = sp
+	}
+
+	if p == 0 {
+		// prepend
+		ret = append([]string{UnknownName}, ret...)
+	}
+	rname := strings.Join(ret, "/")
+
+	return p, rname
+}
+
+func getPath(key uint64, tree *NodeTree, snaptree *NodeTree) string {
 	if key == RootInodeID {
 		return "/"
 	}
 
-	parent := t.GetParent(key)
-	if parent == t.prevPathID {
-		return t.prevPath
+	parent, _ := getParentName(key, tree, snaptree)
+	if parent == tree.prevPathID {
+		return tree.prevPath
 	}
 
+	ret := []string{}
 	p := parent
-	ret := ""
 
 	for p != 0 && p != RootInodeID {
-		pp, n := t.GetParentName(p)
-		if len(n) == 0 {
-			n = UnknownName
+		pp, nn := getParentName(p, tree, snaptree)
+		if len(nn) > 0 {
+			ret = append([]string{nn}, ret...)
 		}
-		ret = fmt.Sprintf("%s/%s", string(n), ret)
 		p = pp
 	}
 
-	if p == RootInodeID {
-		ret = fmt.Sprintf("/%s", ret)
-	} else {
-		ret = fmt.Sprintf("%s%s", DetachedPrefix, ret)
+	rname := strings.Join(ret, "/")
+
+	if len(rname) > 0 {
+		rname = fmt.Sprintf("%s/", rname)
 	}
 
-	t.prevPathID = parent
-	t.prevPath = ret
+	if p == RootInodeID {
+		rname = fmt.Sprintf("/%s", rname)
+	} else {
+		rname = fmt.Sprintf("%s%s", DetachedPrefix, rname)
+	}
 
-	return ret
+	tree.prevPathID = parent
+	tree.prevPath = rname
+
+	return rname
 }
