@@ -2,22 +2,33 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
 const AllocNodeChunk = 100000
 
-type Node struct {
+type inodeRefStruct struct {
+	RefId  uint64
+	SnapId uint32
+	Name   []byte
+}
+
+type iNode struct {
 	Parent uint64
 	Name   []byte
+}
+
+type Node struct {
+	SnapId map[uint32]*iNode
 }
 
 type NodeTree struct {
 	prealloc     []Node
 	preallocUsed int
 	data         map[uint64]*Node
-	prevPathID   uint64
-	prevPath     string
+	//	prevPathID   uint64
+	//	prevPath     []string
 }
 
 func NewNodeTree() *NodeTree {
@@ -25,8 +36,8 @@ func NewNodeTree() *NodeTree {
 		data:         make(map[uint64]*Node),
 		prealloc:     make([]Node, AllocNodeChunk),
 		preallocUsed: 0,
-		prevPathID:   RootInodeID,
-		prevPath:     "/",
+		//		prevPathID:   RootInodeID,
+		//		prevPath:     []string{"/"},
 	}
 }
 
@@ -40,126 +51,174 @@ func (t *NodeTree) NewNode() *Node {
 	return n
 }
 
-func (t *NodeTree) SetParent(key uint64, parent uint64) {
+func (t *NodeTree) SetParent(key uint64, snapshot uint32, parent uint64) {
 	n := t.data[key]
 	if n != nil {
-		n.Parent = parent
+		s := n.SnapId[snapshot]
+		if s != nil {
+			s.Parent = parent
+			return
+		}
+		n.SnapId[snapshot] = &iNode{Parent: parent}
 		return
 	}
 	n = t.NewNode()
-	n.Parent = parent
+	snapId := make(map[uint32]*iNode)
+	snapId[snapshot] = &iNode{Parent: parent}
+	n.SnapId = snapId
 	t.data[key] = n
 }
 
-func (t *NodeTree) SetName(key uint64, name []byte) {
+func (t *NodeTree) SetName(key uint64, snapshot uint32, name []byte) {
+
+	if key == RootInodeID {
+		return
+	}
+
 	n := t.data[key]
 	if n != nil {
-		n.Name = name
+		s := n.SnapId[snapshot]
+		if s != nil {
+			s.Name = name
+			return
+		}
+		for ss := range n.SnapId {
+			if len(n.SnapId[ss].Name) == 0 {
+				n.SnapId[ss].Name = name
+			}
+		}
+		return
+	}
+	fmt.Printf("call SetName(key=%d, snap=%d, name=%s): unknown key", key, snapshot, string(name))
+	os.Exit(1)
+}
+
+func (t *NodeTree) SetParentName(key uint64, snapshot uint32, parent uint64, name []byte) {
+	n := t.data[key]
+	if n != nil {
+		n.SnapId[snapshot] = &iNode{Parent: parent, Name: name}
 		return
 	}
 	n = t.NewNode()
-	n.Name = name
+	snapId := make(map[uint32]*iNode)
+	snapId[snapshot] = &iNode{Parent: parent, Name: name}
+	n.SnapId = snapId
 	t.data[key] = n
 }
 
-func (t *NodeTree) SetParentName(key uint64, parent uint64, name []byte) {
+func (t *NodeTree) GetName(key uint64, snapshot uint32) []byte {
 	n := t.data[key]
 	if n != nil {
-		n.Parent = parent
-		n.Name = name
-		return
-	}
-	n = t.NewNode()
-	n.Parent = parent
-	n.Name = name
-	t.data[key] = n
-}
-
-func (t *NodeTree) GetName(key uint64) []byte {
-	n := t.data[key]
-	if n != nil {
-		return n.Name
+		return n.SnapId[snapshot].Name
 	}
 	return nil
 }
 
-func (t *NodeTree) GetParent(key uint64) uint64 {
+func (t *NodeTree) GetParents(key uint64) map[uint32]*iNode {
 	n := t.data[key]
 	if n != nil {
-		return n.Parent
+		return n.SnapId
 	}
-	return 0
+	return map[uint32]*iNode{}
 }
 
-func (t *NodeTree) GetParentName(key uint64) (uint64, []byte) {
-	n := t.data[key]
-	if n != nil {
-		return n.Parent, n.Name
-	}
-	return 0, nil
-}
+func getPathsReq(key uint64, snap uint32, tree *NodeTree) (uint64, []string) {
 
-func getParentName(key uint64, tree *NodeTree, snaptree *NodeTree) (uint64, string) {
-	p, n := tree.GetParentName(key)
-	ret := []string{}
-
-	if len(n) > 0 {
-		ret = append(ret, string(n))
-	}
-
-	if p == 0 {
-		sp, sn := snaptree.GetParentName(key)
-		if len(sn) > 0 {
-			// prepend
-			ret = append([]string{string(sn)}, ret...)
-		}
-		p = sp
-	}
-
-	if p == 0 {
-		// prepend
-		ret = append([]string{UnknownName}, ret...)
-	}
-	rname := strings.Join(ret, "/")
-
-	return p, rname
-}
-
-func getPath(key uint64, tree *NodeTree, snaptree *NodeTree) string {
 	if key == RootInodeID {
-		return "/"
+		return key, []string{}
+	}
+	if key == 0 {
+		return key, []string{UnknownName}
 	}
 
-	parent, _ := getParentName(key, tree, snaptree)
-	if parent == tree.prevPathID {
-		return tree.prevPath
-	}
+	ps := tree.GetParents(key)
 
-	ret := []string{}
-	p := parent
+	if ps[snap] != nil {
 
-	for p != 0 && p != RootInodeID {
-		pp, nn := getParentName(p, tree, snaptree)
-		if len(nn) > 0 {
-			ret = append([]string{nn}, ret...)
-		}
-		p = pp
-	}
+		path := []string{string(ps[snap].Name)}
+		p, n := getPathsReq(ps[snap].Parent, snap, tree)
+		path = append(n, path...)
+		return p, path
 
-	rname := strings.Join(ret, "/")
+	} else if ps[0] != nil {
 
-	if len(rname) > 0 {
-		rname = fmt.Sprintf("%s/", rname)
-	}
+		path := []string{string(ps[0].Name)}
+		p, n := getPathsReq(ps[0].Parent, snap, tree)
+		path = append(n, path...)
+		return p, path
 
-	if p == RootInodeID {
-		rname = fmt.Sprintf("/%s", rname)
 	} else {
-		rname = fmt.Sprintf("%s%s", DetachedPrefix, rname)
+
+		// find max snapid
+		maxSnap := uint32(0)
+		for s := range ps {
+			if s > maxSnap {
+				maxSnap = s
+			}
+		}
+		if maxSnap > 0 {
+			snap = maxSnap
+			path := []string{string(ps[snap].Name)}
+			p, n := getPathsReq(ps[snap].Parent, snap, tree)
+			path = append(n, path...)
+			return p, path
+
+		}
+		return 0, []string{UnknownName}
+
 	}
 
-	tree.prevPathID = parent
-	tree.prevPath = rname
+	return 0, []string{UnknownName}
+}
 
-	return rname
+func getPaths(key uint64, name string, tree *NodeTree, isDir bool, snapSkip *bool) []string {
+
+	paths := []string{}
+	ps := tree.GetParents(key)
+
+	// snapSkip mode
+	if *snapSkip && !isDir && len(ps) > 1 {
+		_, ok := ps[0]
+		if ok {
+			pt := make(map[uint32]*iNode)
+			pt[0] = ps[0]
+			ps = pt
+		} else {
+			// find MAX snapId
+			maxSnap := uint32(0)
+			for s := range ps {
+				if s > maxSnap {
+					maxSnap = s
+				}
+			}
+			pt := make(map[uint32]*iNode)
+			pt[maxSnap] = ps[maxSnap]
+			ps = pt
+		}
+	}
+
+	for snap := range ps {
+
+		// skip dirs in snapshot
+		if isDir && snap != 0 && *snapSkip {
+			continue
+		}
+
+		if len(ps[snap].Name) > 0 {
+			name = string(ps[snap].Name)
+		}
+
+		parent := ps[snap].Parent
+
+		if len(name) == 0 {
+			fmt.Printf("call getPaths(key=%d, snap=%d): empty name", key, snap)
+			os.Exit(1)
+		}
+
+		_, path := getPathsReq(parent, snap, tree)
+		path = append(path, name)
+		rpath := fmt.Sprintf("/%s", strings.Join(path, "/"))
+		paths = append(paths, rpath)
+	}
+	return paths
 }
