@@ -39,8 +39,8 @@ func main() {
 
 	fileName := flag.String("i", "", "[mandatory]: HDFS fsimage filename")
 	extraFields := flag.String("extra-fields", "", "[optional]: add static json fields =\"{\\\"Data\\\":\\\"2006-01-02\\\"\"}")
-	snapReplace := flag.Bool("R", false, "[optional]: snapshots are placed into virtual directory /(snapshots)")
-	snapSkip := flag.Bool("S", false, "[optional]: snapshots will contain only deleted object(s)")
+	snapReplace := flag.Bool("snap-replace", false, "[optional]: snapshots are placed into virtual directory /(snapshots)")
+	snapCleanup := flag.Bool("snap-cleanup", false, "[optional]: snapshots will contain only deleted object(s)")
 
 	flag.Parse()
 
@@ -75,7 +75,7 @@ func main() {
 
 	tree := NewNodeTree()
 	strings := make(map[uint32]string)
-	inodeReference := make(map[uint32]*inodeRefStruct)
+	inodeReference := NewNodeRefTree()
 
 	if err = readStrings(sectionMap["STRING_TABLE"], f, strings); err != nil {
 		log.Fatal(err)
@@ -92,10 +92,10 @@ func main() {
 	if err = readDirectoryNames(sectionMap["INODE"], f, tree); err != nil {
 		log.Fatal(err)
 	}
-	if err = dumpSnapshots(sectionMap["SNAPSHOT"], f, tree, inodeReference, strings, extraFieldsJson, snapReplace); err != nil {
+	if err = dumpSnapshots(sectionMap["SNAPSHOT"], f, tree, snapReplace); err != nil {
 		log.Fatal(err)
 	}
-	if err = dump(sectionMap["INODE"], f, tree, strings, extraFieldsJson, snapSkip); err != nil {
+	if err = dump(sectionMap["INODE"], f, tree, strings, extraFieldsJson, snapCleanup); err != nil {
 		log.Fatal(err)
 	}
 
@@ -133,8 +133,7 @@ func readSummary(imageFile *os.File, fileLength int64) (map[string]*pb.FileSumma
 	return sectionMap, nil
 }
 
-func dumpSnapshots(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, inodeReference map[uint32]*inodeRefStruct,
-	strings map[uint32]string, extraFields map[string]interface{}, snapReplace *bool) error {
+func dumpSnapshots(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, snapReplace *bool) error {
 
 	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
 	if err != nil {
@@ -173,8 +172,7 @@ func dumpSnapshots(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeT
 	return nil
 }
 
-func readSnapshotDiff(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
-	inodeReference map[uint32]*inodeRefStruct) error {
+func readSnapshotDiff(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, inodeReference *NodeRefTree) error {
 
 	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
 	if err != nil {
@@ -226,9 +224,10 @@ func readSnapshotDiff(info *pb.FileSummary_Section, imageFile *os.File, tree *No
 				return err
 			}
 			for _, deletedInodeRef := range snapshotDirDiff.GetDeletedINodeRef() {
-				tree.SetParent(inodeReference[deletedInodeRef].RefId, snapshotDirDiff.GetSnapshotId(), snapshotDiff.GetInodeId())
-				if len(inodeReference[deletedInodeRef].Name) > 0 {
-					tree.SetName(inodeReference[deletedInodeRef].RefId, snapshotDirDiff.GetSnapshotId(), inodeReference[deletedInodeRef].Name)
+				tree.SetParent(inodeReference.GetRefId(deletedInodeRef), snapshotDirDiff.GetSnapshotId(), snapshotDiff.GetInodeId())
+				refName := inodeReference.GetRefName(deletedInodeRef)
+				if len(refName) > 0 {
+					tree.SetName(inodeReference.GetRefId(deletedInodeRef), snapshotDirDiff.GetSnapshotId(), refName)
 				}
 			}
 
@@ -288,8 +287,7 @@ func readDirectoryNames(info *pb.FileSummary_Section, imageFile *os.File, tree *
 	return nil
 }
 
-func readTree(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
-	inodeReference map[uint32]*inodeRefStruct) error {
+func readTree(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, inodeReference *NodeRefTree) error {
 
 	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
 	if err != nil {
@@ -313,15 +311,14 @@ func readTree(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
 		// children that are reference nodes, each element is a reference node id
 		refChildren := dirEntry.GetRefChildren()
 		for j := 0; j < len(refChildren); j++ {
-			tree.SetParent(inodeReference[refChildren[j]].RefId, inodeReference[refChildren[j]].SnapId, dirEntry.GetParent())
+			tree.SetParent(inodeReference.GetRefId(refChildren[j]), inodeReference.GetRefSnapId(refChildren[j]), dirEntry.GetParent())
 		}
 	}
 
 	return nil
 }
 
-func readReferenceTree(info *pb.FileSummary_Section, imageFile *os.File,
-	inodeReference map[uint32]*inodeRefStruct) error {
+func readReferenceTree(info *pb.FileSummary_Section, imageFile *os.File, inodeReference *NodeRefTree) error {
 
 	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
 	if err != nil {
@@ -338,9 +335,8 @@ func readReferenceTree(info *pb.FileSummary_Section, imageFile *os.File,
 			}
 			return err
 		}
-		ref := &inodeRefStruct{RefId: inodeReferenceSection.GetReferredId(),
-			SnapId: inodeReferenceSection.GetLastSnapshotId(), Name: inodeReferenceSection.GetName()}
-		inodeReference[i] = ref
+		inodeReference.SetRefSnapName(i, inodeReferenceSection.GetLastSnapshotId(),
+			inodeReferenceSection.GetReferredId(), inodeReferenceSection.GetName())
 		i++
 	}
 
@@ -375,7 +371,7 @@ func readStrings(info *pb.FileSummary_Section, imageFile *os.File, strings map[u
 }
 
 func dump(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
-	strings map[uint32]string, extraFields map[string]interface{}, snapSkip *bool) error {
+	strings map[uint32]string, extraFields map[string]interface{}, snapCleanup *bool) error {
 
 	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
 	if err != nil {
@@ -399,7 +395,8 @@ func dump(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
 		}
 
 		if inode.File != nil {
-			paths := getPaths(inode.GetId(), string(inode.GetName()), tree, false, snapSkip)
+			isDir := false
+			paths := getPaths(inode.GetId(), string(inode.GetName()), tree, isDir, snapCleanup)
 			blocks := inode.File.GetBlocks()
 			size := uint64(0)
 			for i := 0; i < len(blocks); i++ {
@@ -434,7 +431,8 @@ func dump(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
 		}
 
 		if inode.Directory != nil {
-			paths := getPaths(inode.GetId(), string(inode.GetName()), tree, true, snapSkip)
+			isDir := true
+			paths := getPaths(inode.GetId(), string(inode.GetName()), tree, isDir, snapCleanup)
 			perm := inode.Directory.GetPermission() % (1 << 16)
 			dataDump := map[string]interface{}{
 				"ModificationTime":   time.Unix(0, int64(inode.Directory.GetModificationTime())*1e6).Format("2006-01-02 15:04:05"),
@@ -447,7 +445,7 @@ func dump(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
 			for k, v := range extraFields {
 				dataDump[k] = v
 			}
-			if len(paths) == 0 && !*snapSkip && inode.GetId() != RootInodeID {
+			if len(paths) == 0 && !*snapCleanup && inode.GetId() != RootInodeID {
 				paths = append(paths, fmt.Sprintf("/%s/%s", UnknownName, string(inode.GetName())))
 			}
 			for _, path := range paths {

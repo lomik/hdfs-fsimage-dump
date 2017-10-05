@@ -8,12 +8,6 @@ import (
 
 const AllocNodeChunk = 100000
 
-type inodeRefStruct struct {
-	RefId  uint64
-	SnapId uint32
-	Name   []byte
-}
-
 type iNode struct {
 	Parent uint64
 	Name   []byte
@@ -89,7 +83,7 @@ func (t *NodeTree) SetName(key uint64, snapshot uint32, name []byte) {
 		}
 		return
 	}
-	fmt.Printf("call SetName(key=%d, snap=%d, name=%s): unknown key", key, snapshot, string(name))
+	fmt.Printf("call SetName(key=%d, snap=%d, name=%s): unknown key\n", key, snapshot, string(name))
 	os.Exit(1)
 }
 
@@ -171,13 +165,13 @@ func getPathsReq(key uint64, snap uint32, tree *NodeTree) (uint64, []string) {
 	return 0, []string{UnknownName}
 }
 
-func getPaths(key uint64, name string, tree *NodeTree, isDir bool, snapSkip *bool) []string {
+func getPaths(key uint64, name string, tree *NodeTree, isDir bool, snapCleanup *bool) []string {
 
 	paths := []string{}
 	ps := tree.GetParents(key)
 
-	// snapSkip mode
-	if *snapSkip && !isDir && len(ps) > 1 {
+	// snapCleanup mode
+	if *snapCleanup && !isDir && len(ps) > 1 {
 		_, ok := ps[0]
 		if ok {
 			pt := make(map[uint32]*iNode)
@@ -200,7 +194,7 @@ func getPaths(key uint64, name string, tree *NodeTree, isDir bool, snapSkip *boo
 	for snap := range ps {
 
 		// skip dirs in snapshot
-		if isDir && snap != 0 && *snapSkip {
+		if isDir && snap != 0 && *snapCleanup {
 			continue
 		}
 
@@ -211,7 +205,7 @@ func getPaths(key uint64, name string, tree *NodeTree, isDir bool, snapSkip *boo
 		parent := ps[snap].Parent
 
 		if len(name) == 0 {
-			fmt.Printf("call getPaths(key=%d, snap=%d): empty name", key, snap)
+			fmt.Printf("call getPaths(key=%d, snap=%d): empty name\n", key, snap)
 			os.Exit(1)
 		}
 
