@@ -130,6 +130,7 @@ func readSummary(imageFile *os.File, fileLength int64) (map[string]*pb.FileSumma
 		sectionMap[value.GetName()] = value
 	}
 
+	fr = nil
 	return sectionMap, nil
 }
 
@@ -169,6 +170,7 @@ func dumpSnapshots(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeT
 		}
 	}
 
+	fr = nil
 	return nil
 }
 
@@ -176,11 +178,6 @@ func readSnapshotDiff(info *pb.FileSummary_Section, imageFile *os.File, tree *No
 
 	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
 	if err != nil {
-		return err
-	}
-
-	snapshotDiffSection := &pb.SnapshotDiffSection{}
-	if err = fr.ReadMessage(snapshotDiffSection); err != nil {
 		return err
 	}
 
@@ -247,6 +244,7 @@ func readSnapshotDiff(info *pb.FileSummary_Section, imageFile *os.File, tree *No
 		}
 	}
 
+	fr = nil
 	return nil
 }
 
@@ -284,6 +282,7 @@ func readDirectoryNames(info *pb.FileSummary_Section, imageFile *os.File, tree *
 		}
 	}
 
+	fr = nil
 	return nil
 }
 
@@ -315,6 +314,7 @@ func readTree(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, 
 		}
 	}
 
+	fr = nil
 	return nil
 }
 
@@ -340,6 +340,7 @@ func readReferenceTree(info *pb.FileSummary_Section, imageFile *os.File, inodeRe
 		i++
 	}
 
+	fr = nil
 	return nil
 }
 
@@ -367,6 +368,7 @@ func readStrings(info *pb.FileSummary_Section, imageFile *os.File, strings map[u
 		strings[entry.GetId()] = entry.GetStr()
 	}
 
+	fr = nil
 	return nil
 }
 
@@ -455,5 +457,6 @@ func dump(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
 		}
 	}
 
+	fr = nil
 	return nil
 }
