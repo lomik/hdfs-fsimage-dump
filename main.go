@@ -1,7 +1,6 @@
 package main
 
 import (
-	pb "./pb/hadoop_hdfs_fsimage"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -11,6 +10,8 @@ import (
 	"log"
 	"os"
 	"time"
+
+	pb "github.com/lomik/hdfs-fsimage-dump/pb/hadoop_hdfs_fsimage"
 )
 
 const (

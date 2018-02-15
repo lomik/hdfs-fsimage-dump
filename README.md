@@ -12,7 +12,6 @@ Difference from `hdfs oiv -p Delimited`:
 ```sh
 git clone https://github.com/lomik/hdfs-fsimage-dump
 cd hdfs-fsimage-dump
-make submodules
 make
 ```
 

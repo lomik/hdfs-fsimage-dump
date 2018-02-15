@@ -1,9 +1,7 @@
 GO ?= go
 export GOPATH := $(CURDIR)/_vendor
 
-all:
-	$(GO) build
+MODULE:=github.com/lomik/hdfs-fsimage-dump
 
-submodules:
-	git submodule sync
-	git submodule update --init --recursive
+all:
+	$(GO) build $(MODULE)
