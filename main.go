@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"io"
 	"log"
 	"os"
 	"time"
+
+	"github.com/golang/protobuf/proto"
 
 	pb "github.com/lomik/hdfs-fsimage-dump/pb/hadoop_hdfs_fsimage"
 )
@@ -20,6 +21,9 @@ const (
 	SnapshotPrefix = "(snapshot)"
 	UnknownName    = "(unknown)"
 )
+
+var Codec string
+var sectionMap map[string]*pb.FileSummary_Section
 
 var (
 	permMap = []string{
@@ -33,6 +37,12 @@ var (
 		"rwx",
 	}
 )
+
+type IFrameReader interface {
+	ReadFrame() ([]byte, error)
+	ReadMessage(msg proto.Message) error
+	ReadUvarint() (uint64, error)
+}
 
 func main() {
 
@@ -67,7 +77,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sectionMap, err := readSummary(f, fInfo.Size())
+	sectionMap, Codec, err = readSummary(f, fInfo.Size())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -103,26 +113,34 @@ func main() {
 	f.Close()
 }
 
-func readSummary(imageFile *os.File, fileLength int64) (map[string]*pb.FileSummary_Section, error) {
+func readSummary(imageFile *os.File, fileLength int64) (map[string]*pb.FileSummary_Section, string, error) {
 
 	_, err := imageFile.Seek(-4, 2)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	var summaryLength int32
 	if err = binary.Read(imageFile, binary.BigEndian, &summaryLength); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	fr, err := NewFrameReader(imageFile, fileLength-int64(summaryLength)-4, int64(summaryLength))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	fileSummary := &pb.FileSummary{}
 	if err = fr.ReadMessage(fileSummary); err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	var codec string
+	if fileSummary.Codec == nil {
+		//fmt.Printf("readSummary codec: %v\n", "nil")
+		codec = ""
+	} else {
+		//fmt.Printf("readSummary codec: %v\n", *fileSummary.Codec)
+		codec = *fileSummary.Codec
 	}
 
 	sectionMap := make(map[string]*pb.FileSummary_Section)
@@ -132,12 +150,19 @@ func readSummary(imageFile *os.File, fileLength int64) (map[string]*pb.FileSumma
 	}
 
 	fr = nil
-	return sectionMap, nil
+	return sectionMap, codec, nil
 }
 
 func dumpSnapshots(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, snapReplace *bool) error {
 
-	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	var fr IFrameReader
+	var err error
+
+	if Codec == "" {
+		fr, err = NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	} else {
+		fr, err = NewFrameReader2(imageFile, int64(info.GetOffset()), int64(info.GetLength()), Codec)
+	}
 	if err != nil {
 		return err
 	}
@@ -177,7 +202,14 @@ func dumpSnapshots(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeT
 
 func readSnapshotDiff(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, inodeReference *NodeRefTree) error {
 
-	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	var fr IFrameReader
+	var err error
+
+	if Codec == "" {
+		fr, err = NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	} else {
+		fr, err = NewFrameReader2(imageFile, int64(info.GetOffset()), int64(info.GetLength()), Codec)
+	}
 	if err != nil {
 		return err
 	}
@@ -251,7 +283,14 @@ func readSnapshotDiff(info *pb.FileSummary_Section, imageFile *os.File, tree *No
 
 func readDirectoryNames(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree) error {
 
-	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	var fr IFrameReader
+	var err error
+
+	if Codec == "" {
+		fr, err = NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	} else {
+		fr, err = NewFrameReader2(imageFile, int64(info.GetOffset()), int64(info.GetLength()), Codec)
+	}
 	if err != nil {
 		return err
 	}
@@ -289,7 +328,14 @@ func readDirectoryNames(info *pb.FileSummary_Section, imageFile *os.File, tree *
 
 func readTree(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, inodeReference *NodeRefTree) error {
 
-	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	var fr IFrameReader
+	var err error
+
+	if Codec == "" {
+		fr, err = NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	} else {
+		fr, err = NewFrameReader2(imageFile, int64(info.GetOffset()), int64(info.GetLength()), Codec)
+	}
 	if err != nil {
 		return err
 	}
@@ -321,7 +367,14 @@ func readTree(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree, 
 
 func readReferenceTree(info *pb.FileSummary_Section, imageFile *os.File, inodeReference *NodeRefTree) error {
 
-	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	var fr IFrameReader
+	var err error
+
+	if Codec == "" {
+		fr, err = NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	} else {
+		fr, err = NewFrameReader2(imageFile, int64(info.GetOffset()), int64(info.GetLength()), Codec)
+	}
 	if err != nil {
 		return err
 	}
@@ -347,7 +400,14 @@ func readReferenceTree(info *pb.FileSummary_Section, imageFile *os.File, inodeRe
 
 func readStrings(info *pb.FileSummary_Section, imageFile *os.File, strings map[uint32]string) error {
 
-	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	var fr IFrameReader
+	var err error
+
+	if Codec == "" {
+		fr, err = NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	} else {
+		fr, err = NewFrameReader2(imageFile, int64(info.GetOffset()), int64(info.GetLength()), Codec)
+	}
 	if err != nil {
 		return err
 	}
@@ -376,7 +436,14 @@ func readStrings(info *pb.FileSummary_Section, imageFile *os.File, strings map[u
 func dump(info *pb.FileSummary_Section, imageFile *os.File, tree *NodeTree,
 	strings map[uint32]string, extraFields map[string]interface{}, snapCleanup *bool) error {
 
-	fr, err := NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	var fr IFrameReader
+	var err error
+
+	if Codec == "" {
+		fr, err = NewFrameReader(imageFile, int64(info.GetOffset()), int64(info.GetLength()))
+	} else {
+		fr, err = NewFrameReader2(imageFile, int64(info.GetOffset()), int64(info.GetLength()), Codec)
+	}
 	if err != nil {
 		return err
 	}
