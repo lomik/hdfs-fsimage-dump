@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/shanrui/hdfs-fsimage-dump/lzo"
+	"github.com/lomik/hdfs-fsimage-dump/lzo"
 
 	"github.com/golang/snappy"
 )
